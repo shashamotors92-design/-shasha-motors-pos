@@ -1,0 +1,8 @@
+{
+  "name": "Shasha Motors POS",
+  "short_name": "Shasha POS",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#17365d"
+}

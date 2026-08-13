@@ -1,0 +1,9 @@
+NEXT STEP
+1. Create a Supabase project.
+2. Run supabase_schema.sql in SQL Editor.
+3. Create an Auth user for the shop owner.
+4. Copy the project URL and publishable/anon key.
+5. Enter them in POS -> More -> Cloud Database.
+6. Then the next build will connect products, sales and stock to the cloud database.
+
+Security: keep RLS enabled. Never put a service-role/secret key in the browser.
