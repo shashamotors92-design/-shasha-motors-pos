@@ -97,4 +97,11 @@ function scan(){let box=document.getElementById('reader');box.classList.remove('
 document.getElementById('discount').oninput=renderCart;document.getElementById('cash').oninput=renderCart;
 renderProducts();renderCart();renderStock();renderSales();dashboard();
 </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+window.sbClient = supabase.createClient(
+  "https://mncufdwicrlknhhkica.supabase.co",
+  "sb_publishable_pK3jWDVlSe6moSxIBIHO2g_JNxnuA4O"
+);
+</script>
 </body></html>
