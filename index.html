@@ -16,7 +16,7 @@ main{max-width:720px;margin:auto;padding:12px}.card{background:#fff;border-radiu
 .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.tabs button{padding:9px;font-size:12px}
 input,select,button{font-size:15px;padding:11px;border-radius:9px;border:1px solid #ccd5e2;width:100%}
 button{background:#17365d;color:#fff;border:0;font-weight:bold}.green{background:#548235}.red{background:#c00000;width:auto;padding:7px 10px}
-.row{display:flex;gap:7px}.row>*{flex:1}.hidden{display:none}.muted{font-size:12px;color:#667}
+.row{display:flex;gap:7px}.row>*{flex:1}.hidden{display:none!important}.muted{font-size:12px;color:#667}
 .item{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #eee}.name{flex:1}.qty{width:65px}
 .total{text-align:right;font-size:24px;font-weight:bold;margin:13px 0}
 .badge{display:inline-block;background:#e2f0d9;padding:3px 7px;border-radius:10px;font-size:11px}
@@ -102,14 +102,14 @@ button{background:#17365d;color:#fff;border:0;font-weight:bold}.green{background
 </section>
 </main>
 
-<div id="invoiceModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Invoice details" onclick="if(event.target===this)closeInvoice()">
+<div id="invoiceModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Invoice">
 <div class="modal-box" onclick="event.stopPropagation()">
 <div id="receiptContent" class="receipt"></div>
 <div class="modal-actions">
 <button type="button" onclick="printInvoice()">🖨 Print Receipt</button>
 <button type="button" onclick="downloadInvoicePDF()">⬇ Download PDF</button>
 <button type="button" onclick="shareInvoice()">📤 Share</button>
-<button id="closeInvoiceBtn" type="button" class="red full" onclick="event.stopPropagation();closeInvoice()">Close</button>
+<button id="closeInvoiceBtn" type="button" class="full" onclick="closeInvoice(); return false;">🔴 Close</button>
 </div>
 </div>
 </div>
@@ -159,16 +159,22 @@ function showInvoice(inv){
 function closeInvoice(){
  const modal=document.getElementById("invoiceModal");
  if(!modal)return;
+
  modal.classList.add("hidden");
+ modal.style.display="none";
  modal.setAttribute("aria-hidden","true");
  document.body.style.overflow="";
+}
 }
 function openInvoiceModal(){
  const modal=document.getElementById("invoiceModal");
  if(!modal)return;
+
  modal.classList.remove("hidden");
+ modal.style.display="flex";
  modal.setAttribute("aria-hidden","false");
  document.body.style.overflow="hidden";
+}
 }
 function printInvoice(){window.print()}
 function downloadInvoicePDF(){
@@ -193,14 +199,7 @@ async function shareInvoice(){
  }catch(e){}
 }
 
-document.addEventListener("DOMContentLoaded",()=>{
- const btn=document.getElementById("closeInvoiceBtn");
- if(btn){
-  const close=ev=>{ev.preventDefault();ev.stopPropagation();closeInvoice();};
-  btn.addEventListener("click",close,{passive:false});
-  btn.addEventListener("touchend",close,{passive:false});
- }
-});
+
 document.addEventListener("keydown",ev=>{if(ev.key==="Escape")closeInvoice();});
 
 function startScanner(){
