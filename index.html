@@ -77,6 +77,36 @@ const SEED=[{"barcode":"SM000001","partNo":"","name":"SHARK ANTENA 881","categor
 const PK='shasha_final_products_v1',SK='shasha_final_sales_v1',IK='shasha_final_invoice_v1';
 let products=JSON.parse(localStorage.getItem(PK)||'null')||SEED;
 let sales=JSON.parse(localStorage.getItem(SK)||'[]'),cart=[],last=null,scanner=null;
+  async function loadProductsFromSupabase(){
+  const { data, error } = await window.sbClient
+    .from('products')
+    .select('*');
+
+  if(error){
+    console.error('Supabase products error:', error);
+    return;
+  }
+
+  if(data && data.length){
+    products = data.map(p => ({
+      ...p,
+      barcode: String(p.barcode || ''),
+      name: p.name || '',
+      partNo: p.part_no || p.partNo || '',
+      category: p.category || '',
+      cost: Number(p.cost || 0),
+      sell: Number(p.sell || 0),
+      stock: Number(p.stock || 0),
+      min: Number(p.min || 0),
+      supplier: p.supplier || ''
+    }));
+
+    localStorage.setItem(PK, JSON.stringify(products));
+
+    renderProducts();
+    renderStock();
+  }
+}
 function save(){localStorage.setItem(PK,JSON.stringify(products));localStorage.setItem(SK,JSON.stringify(sales))}
 function m(n){return Number(n||0).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function esc(s){return String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]))}
@@ -101,7 +131,12 @@ function pdf(){if(!last)return;if(window.html2pdf)html2pdf().set({filename:last.
 async function share(){if(!last)return;let t=`SHASHA MOTORS POS\nInvoice: ${last.invoice}\nTotal: Rs. ${m(last.total)}\nPayment: ${last.payment}`;if(navigator.share){try{await navigator.share({title:last.invoice,text:t})}catch(e){}}else{try{await navigator.clipboard.writeText(t);alert('Copied.')}catch(e){alert(t)}}}
 function scan(){let box=document.getElementById('reader');box.classList.remove('hidden');if(!window.Html5Qrcode)return alert('Scanner loading. Try again.');if(scanner)try{scanner.stop()}catch(e){}scanner=new Html5Qrcode('reader');scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:120}},code=>{let p=products.find(x=>x.barcode===code);if(p){add(code);scanner.stop().then(()=>box.classList.add('hidden')).catch(()=>{})}else alert('Barcode not found: '+code)}).catch(()=>{box.classList.add('hidden');alert('Camera access needs HTTPS and permission.')})}
 document.getElementById('discount').oninput=renderCart;document.getElementById('cash').oninput=renderCart;
-renderProducts();renderCart();renderStock();renderSales();dashboard();
+renderProducts();
+renderCart();
+renderStock();
+renderSales();
+dashboard();
+loadProductsFromSupabase();
 </script>
   
 </body></html>
