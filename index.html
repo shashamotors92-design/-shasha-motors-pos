@@ -122,7 +122,10 @@ let cart=[];
 const money=n=>Number(n||0).toLocaleString("en-LK",{minimumFractionDigits:2,maximumFractionDigits:2});
 function save(){localStorage.setItem("shasha_items",JSON.stringify(items));localStorage.setItem("shasha_sales_cloudready_v1",JSON.stringify(sales))}
 function addBarcode(){let b=document.getElementById("barcode").value.trim();if(!b)return;let x=items.find(p=>p.barcode===b);if(!x)return alert("Barcode not found / බාර්කෝඩ් එක හමු වුණේ නැහැ");if(x.stock<=0)return alert("Out of stock / තොග අවසන්");let c=cart.find(p=>p.barcode===b);if(c){if(c.qty>=x.stock)return alert("Not enough stock");c.qty++}else cart.push({barcode:b,qty:1});document.getElementById("barcode").value="";render()}
-document.getElementById("barcode").addEventListener("keydown",e=>{if(e.key==="Enter")addBarcode()});
+document.getElementById("barcode").addEventListener("keydown",e=>{
+  if(e.key==="Enter") addBarcode();
+});
+ 
 function render(){let sub=0;document.getElementById("cart").innerHTML=cart.map((c,i)=>{let x=items.find(p=>p.barcode===c.barcode),t=x.sell*c.qty;sub+=t;return `<div class="item"><div class="name"><b>${x.name}</b><br><small>${x.barcode} × Rs. ${money(x.sell)}</small></div><input class="qty" type="number" min="1" max="${x.stock}" value="${c.qty}" onchange="cart[${i}].qty=Math.min(Number(this.value)||1,x.stock);render()"><b>Rs. ${money(t)}</b><button class="red" onclick="cart.splice(${i},1);render()">×</button></div>`}).join("")||'<p class="muted">No items / භාණ්ඩ නැහැ.</p>';let d=Number(document.getElementById("discount").value)||0;document.getElementById("grand").textContent=money(Math.max(0,sub-d))}
 document.getElementById("discount").addEventListener("input",render);
 function completeSale(){if(!cart.length)return alert("Bill is empty / බිල් එක හිස්");let sub=cart.reduce((a,c)=>a+items.find(p=>p.barcode===c.barcode).sell*c.qty,0),d=Number(document.getElementById("discount").value)||0,total=Math.max(0,sub-d),cash=Number(document.getElementById("cash").value)||0,payment=document.getElementById("payment").value;if(payment==="CASH"&&cash<total)return alert("Cash received is less than total");let invoice="INV-"+String(sales.length+1).padStart(6,"0"),profit=0,itemsSnapshot=[];cart.forEach(c=>{let x=items.find(p=>p.barcode===c.barcode);x.stock-=c.qty;let itemProfit=(x.sell-x.buy)*c.qty;profit+=itemProfit;itemsSnapshot.push({barcode:c.barcode,name:x.name,qty:c.qty,sell:x.sell,buy:x.buy,total:x.sell*c.qty,profit:itemProfit})});sales.push({invoice,date:new Date().toISOString(),total,profit,payment,cash,balance:cash-total,items:itemsSnapshot});save();alert(invoice+" completed\\nTotal: Rs. "+money(total));cart=[];document.getElementById("cash").value=0;render();renderStock();renderSales()}
@@ -165,7 +168,6 @@ function closeInvoice(){
  modal.setAttribute("aria-hidden","true");
  document.body.style.overflow="";
 }
-}
 function openInvoiceModal(){
  const modal=document.getElementById("invoiceModal");
  if(!modal)return;
@@ -174,7 +176,6 @@ function openInvoiceModal(){
  modal.style.display="flex";
  modal.setAttribute("aria-hidden","false");
  document.body.style.overflow="hidden";
-}
 }
 function printInvoice(){window.print()}
 function downloadInvoicePDF(){
