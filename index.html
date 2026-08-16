@@ -143,7 +143,105 @@ function renderStock(){let s=document.getElementById('stockSearch').value.toLowe
 function editProduct(b){let p=products.find(x=>x.barcode===b);if(!p)return alert('Product not found');editingBarcode=p.barcode||b;document.getElementById('pb').value=p.barcode||'';document.getElementById('pb').readOnly=true;document.querySelector('[onclick="saveProduct()"]').textContent='UPDATE PRODUCT';document.getElementById('pp').value=p.partNo||'';document.getElementById('pn').value=p.name||'';document.getElementById('pg').value=p.category||'';document.getElementById('pcost').value=p.cost??0;document.getElementById('psell').value=p.sell??0;document.getElementById('pstock').value=p.stock??0;document.getElementById('pmin').value=p.min??2;document.getElementById('pmsg').textContent='Editing: '+(p.name||p.barcode);tab('more',document.querySelectorAll('.tab')[3]);document.getElementById('more').scrollIntoView({behavior:'smooth',block:'start'});document.getElementById('pn').focus()}
 function renderSales(){document.getElementById('salesList').innerHTML=sales.slice().reverse().map(s=>`<div class="product"><div class="product-name"><a href="#" onclick="let x=sales.find(z=>z.invoice==='${s.invoice}');show(x);return false">${s.invoice}</a></div><div>${new Date(s.date).toLocaleString()} • Rs. ${m(s.total)} • Profit Rs. ${m(s.profit)} ${s.customer?'• '+esc(s.customer):''}</div></div>`).join('')||'<p class="muted">No sales yet.</p>'}
 function dashboard(){let d=new Date().toDateString(),a=sales.filter(s=>new Date(s.date).toDateString()===d);document.getElementById('ts').textContent='Rs. '+m(a.reduce((x,s)=>x+s.total,0));document.getElementById('tp').textContent='Rs. '+m(a.reduce((x,s)=>x+s.profit,0));document.getElementById('tb').textContent=a.length;document.getElementById('lc').textContent=products.filter(p=>p.stock<=p.min).length;document.getElementById('pc').textContent=products.length}
-async function saveProduct(){let b=document.getElementById('pb').value.trim(),n=document.getElementById('pn').value.trim();if(!b||!n)return alert('Barcode and name required');let p=products.find(x=>x.barcode===b),d={barcode:b,partNo:document.getElementById('pp').value.trim(),name:n,category:document.getElementById('pg').value.trim(),cost:Number(document.getElementById('pcost').value)||0,sell:Number(document.getElementById('psell').value)||0,stock:Number(document.getElementById('pstock').value)||0,min:Number(document.getElementById('pmin').value)||2,supplier:p?.supplier||''};if(p){Object.assign(p,d);try{let r=await window.sbClient.from('products').update({part_no:d.partNo,name:d.name,category:d.category,cost:d.cost,sell:d.sell,stock:d.stock,min:d.min,supplier:d.supplier}).eq('barcode',b);if(r.error)console.warn('Supabase product update failed:',r.error)}catch(e){console.warn('Supabase product update failed:',e)}}else{products.push(d)}save();renderProducts();renderStock();dashboard();document.getElementById('pmsg').textContent=p?'Product updated successfully.':'Product saved successfully.';editingBarcode=null;document.getElementById('pb').readOnly=false;document.querySelector('[onclick="saveProduct()"]').textContent='SAVE PRODUCT'}
+async function saveProduct(){
+  const b=document.getElementById('pb').value.trim();
+  const n=document.getElementById('pn').value.trim();
+  const msg=document.getElementById('pmsg');
+  if(!b||!n)return alert('Barcode and name required');
+
+  const partNo=document.getElementById('pp').value.trim();
+  const category=document.getElementById('pg').value.trim();
+  const cost=Number(document.getElementById('pcost').value)||0;
+  const sell=Number(document.getElementById('psell').value)||0;
+  const stock=Math.max(0,Number(document.getElementById('pstock').value)||0);
+  const min=Math.max(0,Number(document.getElementById('pmin').value)||2);
+  const editing=!!editingBarcode;
+  const current=editing ? products.find(x=>x.barcode===editingBarcode) : null;
+  const supplier=current?.supplier||'';
+
+  if(editing && !current)return alert('Product not found');
+
+  try{
+    msg.textContent='Checking Supabase...';
+
+    // Always check the cloud database, not only the browser cache.
+    // This prevents duplicate products when another phone/browser already has the product.
+    const {data:all,error:checkError}=await window.sbClient
+      .from('products')
+      .select('barcode,part_no,name');
+    if(checkError)throw checkError;
+
+    const rows=Array.isArray(all)?all:[];
+    const sameBarcode=rows.find(x=>String(x.barcode||'').trim().toLowerCase()===b.toLowerCase() && String(x.barcode||'')!==String(editingBarcode||''));
+    const samePart=partNo ? rows.find(x=>String(x.part_no||'').trim().toLowerCase()===partNo.toLowerCase() && String(x.barcode||'')!==String(editingBarcode||'')) : null;
+    const sameName=rows.find(x=>String(x.name||'').trim().toLowerCase()===n.toLowerCase() && String(x.barcode||'')!==String(editingBarcode||''));
+
+    if(sameBarcode){msg.textContent='';return alert('Duplicate product! This barcode already exists. Use EDIT PRODUCT instead.');}
+    if(samePart){msg.textContent='';return alert('Duplicate product! This Part No. already exists.');}
+    if(sameName){msg.textContent='';return alert('Duplicate product! This product name already exists.');}
+
+    const row={barcode:b,part_no:partNo,name:n,category,cost,sell,stock,min,supplier};
+    msg.textContent=editing?'Updating product in Supabase...':'Saving product to Supabase...';
+
+    if(editing){
+      const {data:updated,error}=await window.sbClient
+        .from('products')
+        .update({part_no:partNo,name:n,category,cost,sell,stock,min,supplier})
+        .eq('barcode',editingBarcode)
+        .select()
+        .single();
+      if(error)throw error;
+
+      const saved=updated||row;
+      const idx=products.findIndex(x=>x.barcode===editingBarcode);
+      const normalized={
+        barcode:String(saved.barcode||editingBarcode),
+        partNo:saved.part_no||partNo,
+        name:saved.name||n,
+        category:saved.category||category,
+        cost:Number(saved.cost||0),
+        sell:Number(saved.sell||0),
+        stock:Number(saved.stock||0),
+        min:Number(saved.min??min),
+        supplier:saved.supplier||supplier
+      };
+      if(idx>=0)products[idx]=normalized;
+      else products.push(normalized);
+      msg.textContent='Product updated successfully in Supabase.';
+    }else{
+      const {data:inserted,error}=await window.sbClient
+        .from('products').insert(row).select().single();
+      if(error)throw error;
+
+      const saved=inserted||row;
+      products.push({
+        barcode:String(saved.barcode||b),
+        partNo:saved.part_no||partNo,
+        name:saved.name||n,
+        category:saved.category||category,
+        cost:Number(saved.cost||0),
+        sell:Number(saved.sell||0),
+        stock:Number(saved.stock||0),
+        min:Number(saved.min??min),
+        supplier:saved.supplier||supplier
+      });
+      msg.textContent='Product saved successfully to Supabase.';
+    }
+
+    save();
+    renderProducts();
+    renderStock();
+    renderSales();
+    dashboard();
+    editingBarcode=null;
+    document.getElementById('pb').readOnly=false;
+    document.querySelector('[onclick="saveProduct()"]').textContent='SAVE PRODUCT';
+  }catch(e){
+    console.error('Supabase product save failed:',e);
+    msg.textContent='';
+    alert('Supabase save failed. Nothing was changed locally.\n\n'+(e?.message||e));
+  }
+}
 function clearForm(){['pb','pp','pn','pg','pcost','psell','pstock'].forEach(x=>document.getElementById(x).value='');document.getElementById('pmin').value=2;editingBarcode=null;document.getElementById('pb').readOnly=false;document.querySelector('[onclick="saveProduct()"]').textContent='SAVE PRODUCT';document.getElementById('pmsg').textContent=''}
 function backup(){let d={version:1,exportedAt:new Date().toISOString(),products,sales,invoiceNo:Number(localStorage.getItem(IK)||0)},a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));a.download='shasha-motors-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click()}
 function restoreBackup(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{let d=JSON.parse(r.result);if(!d.products||!d.sales)throw 0;if(!confirm('Restore backup? Current data will be replaced.'))return;products=d.products;sales=d.sales;localStorage.setItem(IK,String(d.invoiceNo||0));save();renderProducts();renderStock();renderSales();dashboard();alert('Backup restored.')}catch(x){alert('Invalid backup file')}};r.readAsText(f)}
