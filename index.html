@@ -19,7 +19,7 @@
 <div class="card"><h3>Backup / Restore</h3><div class="actions"><button class="blue" onclick="backup()">⬇ Backup JSON</button><button class="blue" onclick="document.getElementById('restore').click()">⬆ Restore JSON</button><input id="restore" type="file" accept=".json" class="hidden" onchange="restoreBackup(event)"><button class="blue" onclick="pdf()">🖨 Print / PDF</button><button class="blue" onclick="share()">📤 Share receipt</button></div></div></section></main>
 <div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()"><div id="receipt" class="receipt"></div></div>
 <script>
-const SUPABASE_URL="https://mncufdwiclrlknhhkica.supabase.co",SUPABASE_KEY="sb_publishable_pK3jWDVISe6moSxIBIHO2g_JNxnuA4O";
+const SUPABASE_URL="https://mncufdwiclrknhhkica.supabase.co";SUPABASE_KEY="sb_publishable_pK3jWDVISe6moSxIBIHO2g_JNxnuA4O";
 let sb=null,cloudReady=false,products=[],sales=[],cart=[],last=null,editingBarcode=null,scanner=null,saleBusy=false;
 const money=n=>Number(n||0).toLocaleString("en-LK",{minimumFractionDigits:2,maximumFractionDigits:2}),esc=s=>String(s??"").replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]));
 function setCloud(t,type=""){cloudText.textContent=t;cloudDot.className="dot "+(type==="ok"?"ok":type==="err"?"err":"")}
