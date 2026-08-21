@@ -194,3 +194,270 @@ renderStock();
 renderSales();
 dashboard();
 loadProductsFromSupabase();
+/* ===== CLOUD SALES SYNC FIX ===== */
+
+async function saveSaleToCloud(s) {
+  if (!window.sbClient) {
+    throw new Error("Supabase is not connected.");
+  }
+
+  // Prevent duplicate invoice
+  const { data: existing, error: checkError } =
+    await window.sbClient
+      .from("sales")
+      .select("id")
+      .eq("invoice", s.invoice)
+      .maybeSingle();
+
+  if (checkError) throw checkError;
+  if (existing) return existing.id;
+
+  // Get product IDs
+  const productRows = [];
+
+  for (const item of s.items) {
+    const { data: product, error } =
+      await window.sbClient
+        .from("products")
+        .select("id,barcode,stock")
+        .eq("barcode", item.barcode)
+        .single();
+
+    if (error) throw error;
+
+    productRows.push({
+      item: item,
+      product: product
+    });
+  }
+
+  // Save sale
+  const { data: sale, error: saleError } =
+    await window.sbClient
+      .from("sales")
+      .insert({
+        invoice: s.invoice,
+        sale_time: s.date,
+        subtotal: Number(s.subtotal || 0),
+        discount: Number(s.discount || 0),
+        total: Number(s.total || 0),
+        profit: Number(s.profit || 0),
+        payment: s.payment || "CASH",
+        cash: Number(s.cash || 0),
+        balance: Number(s.change || 0),
+        customer: s.customer || null
+      })
+      .select()
+      .single();
+
+  if (saleError) throw saleError;
+
+  // Save sale items + update stock
+  for (const row of productRows) {
+
+    const item = row.item;
+    const product = row.product;
+
+    await window.sbClient
+      .from("sale_items")
+      .insert({
+        sale_id: sale.id,
+        product_id: product.id,
+        barcode: item.barcode,
+        name: item.name,
+        qty: Number(item.qty),
+        unit_price: Number(item.sell),
+        buy_price: Number(item.cost),
+        total: Number(item.total),
+        profit:
+          (Number(item.sell) - Number(item.cost)) *
+          Number(item.qty)
+      });
+
+    const newStock =
+      Math.max(
+        0,
+        Number(product.stock || 0) -
+        Number(item.qty || 0)
+      );
+
+    const { error: stockError } =
+      await window.sbClient
+        .from("products")
+        .update({
+          stock: newStock
+        })
+        .eq("id", product.id);
+
+    if (stockError) throw stockError;
+
+    await window.sbClient
+      .from("stock_movements")
+      .insert({
+        product_id: product.id,
+        barcode: product.barcode,
+        movement_type: "OUT",
+        qty: Number(item.qty),
+        note: "Sale " + s.invoice
+      });
+  }
+
+  return sale.id;
+}
+
+
+/* Replace old Complete Sale */
+
+window.completeSale = async function () {
+
+  if (!cart.length) {
+    return alert("Bill is empty");
+  }
+
+  const sub = cart.reduce(
+    (a, c) =>
+      a +
+      products.find(p => p.barcode === c.b).sell *
+      c.qty,
+    0
+  );
+
+  const discount =
+    Math.max(
+      0,
+      Number(document.getElementById("discount").value) || 0
+    );
+
+  if (discount > sub) {
+    return alert("Discount exceeds subtotal");
+  }
+
+  const total = sub - discount;
+
+  const payment =
+    document.getElementById("payment").value;
+
+  const cash =
+    Number(document.getElementById("cash").value) || 0;
+
+  if (payment === "CASH" && cash < total) {
+    return alert("Cash received is less than total");
+  }
+
+  const items = cart.map(c => {
+
+    const p =
+      products.find(x => x.barcode === c.b);
+
+    return {
+      barcode: p.barcode,
+      name: p.name,
+      qty: c.qty,
+      cost: p.cost,
+      sell: p.sell,
+      total: p.sell * c.qty
+    };
+  });
+
+  const profit =
+    items.reduce(
+      (a, i) =>
+        a + (i.sell - i.cost) * i.qty,
+      0
+    ) - discount;
+
+  const invoice = inv();
+
+  const sale = {
+    invoice: invoice,
+    date: new Date().toISOString(),
+
+    customer:
+      document.getElementById("customer").value.trim(),
+
+    phone:
+      document.getElementById("phone").value.trim(),
+
+    items: items,
+
+    subtotal: sub,
+    discount: discount,
+    total: total,
+
+    payment: payment,
+    cash: cash,
+
+    change:
+      Math.max(0, cash - total),
+
+    profit: profit
+  };
+
+
+  /* IMPORTANT:
+     Cloud save FIRST.
+     If Supabase fails, sale will NOT complete.
+  */
+
+  try {
+
+    await saveSaleToCloud(sale);
+
+  } catch (error) {
+
+    console.error("SUPABASE SALE ERROR:", error);
+
+    alert(
+      "❌ Sale එක save වුණේ නැහැ.\n\n" +
+      "Supabase error:\n" +
+      (error.message || error)
+    );
+
+    return;
+  }
+
+
+  /* Update local stock only after cloud save succeeds */
+
+  items.forEach(item => {
+
+    const p =
+      products.find(
+        x => x.barcode === item.barcode
+      );
+
+    if (p) {
+      p.stock =
+        Math.max(
+          0,
+          p.stock - item.qty
+        );
+    }
+  });
+
+
+  sale.cloudSynced = true;
+
+  sales.push(sale);
+
+  save();
+
+  last = sale;
+
+  cart = [];
+
+  document.getElementById("discount").value = 0;
+  document.getElementById("cash").value = 0;
+  document.getElementById("customer").value = "";
+  document.getElementById("phone").value = "";
+
+  renderCart();
+  renderProducts();
+  renderSales();
+  dashboard();
+
+  show(sale);
+};
+
+
+/* ===== END CLOUD SALES SYNC FIX ===== */
