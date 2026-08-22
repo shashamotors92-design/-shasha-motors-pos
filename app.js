@@ -461,3 +461,176 @@ window.completeSale = async function () {
 
 
 /* ===== END CLOUD SALES SYNC FIX ===== */
+
+/* ===== FINAL SUPABASE SCHEMA-SAFE FIX ===== */
+(function(){
+  function cloud(){ return window.sbClient; }
+  function normalizeCloudProduct(p){
+    return {
+      id:p.id ?? null,
+      barcode:String(p.barcode ?? ''),
+      partNo:String(p.part_no ?? p.partNo ?? ''),
+      name:String(p.name ?? ''),
+      category:String(p.category ?? ''),
+      cost:Number(p.buy ?? p.cost ?? 0),
+      sell:Number(p.sell ?? 0),
+      stock:Number(p.stock ?? 0),
+      min:Number(p.min_stock ?? p.min ?? 0),
+      supplier:String(p.supplier ?? '')
+    };
+  }
+
+  async function getProductColumns(){
+    const db=cloud();
+    if(!db) throw new Error('Supabase is not connected.');
+    const {data,error}=await db.from('products').select('*').limit(1);
+    if(error) throw error;
+    const sample=(data&&data[0])||{};
+    return new Set(Object.keys(sample));
+  }
+
+  async function reloadCloudProducts(){
+    const db=cloud();
+    if(!db) return false;
+    const {data,error}=await db.from('products').select('*').order('id',{ascending:true});
+    if(error) throw error;
+    if(Array.isArray(data)){
+      products=data.map(normalizeCloudProduct);
+      save();
+      renderProducts(); renderStock(); renderCart(); dashboard();
+      if(typeof populateBarcodeProducts==='function') populateBarcodeProducts();
+    }
+    return true;
+  }
+
+  window.loadProductsFromSupabase=async function(){
+    try{
+      await reloadCloudProducts();
+      const el=document.getElementById('pmsg');
+      if(el) el.textContent='Supabase products loaded successfully.';
+    }catch(e){
+      console.warn('Cloud product load failed; keeping local data:',e);
+      const el=document.getElementById('pmsg');
+      if(el) el.textContent='Cloud load failed. Local data is still available.';
+    }
+  };
+
+  window.saveProduct=async function(){
+    const db=cloud();
+    const b=document.getElementById('pb').value.trim();
+    const partNo=document.getElementById('pp').value.trim();
+    const n=document.getElementById('pn').value.trim();
+    const category=document.getElementById('pg').value.trim();
+    const cost=Number(document.getElementById('pcost').value)||0;
+    const sell=Number(document.getElementById('psell').value)||0;
+    const stock=Math.max(0,Math.floor(Number(document.getElementById('pstock').value)||0));
+    const min=Math.max(0,Math.floor(Number(document.getElementById('pmin').value)||0));
+    const supplier=document.getElementById('psupplier')?.value.trim()||'';
+    const msg=document.getElementById('pmsg');
+    if(!b||!n) return alert('Barcode and product name are required.');
+    if(!db) return alert('Supabase is not connected. Please refresh the page and try again.');
+
+    try{
+      msg.textContent='Checking cloud database...';
+      const cols=await getProductColumns();
+      const {data:matches,error:findError}=await db.from('products').select('*').or(`barcode.eq.${b.replace(/,/g,'')},name.eq.${n.replace(/,/g,'')}`);
+      if(findError) throw findError;
+      const editing=!!editingBarcode;
+      const other=(matches||[]).filter(x=>String(x.barcode)!==String(editingBarcode||''));
+      if(other.some(x=>String(x.barcode).toLowerCase()===b.toLowerCase())) return alert('Duplicate product! This barcode already exists.');
+      if(other.some(x=>String(x.name).toLowerCase()===n.toLowerCase())) return alert('Duplicate product! This product name already exists.');
+
+      const row={barcode:b,name:n};
+      if(cols.has('part_no')) row.part_no=partNo||null;
+      if(cols.has('buy')) row.buy=cost;
+      else if(cols.has('cost')) row.cost=cost;
+      if(cols.has('sell')) row.sell=sell;
+      if(cols.has('stock')) row.stock=stock;
+      if(cols.has('min_stock')) row.min_stock=min;
+      else if(cols.has('min')) row.min=min;
+      if(cols.has('category')) row.category=category||null;
+      if(cols.has('supplier')) row.supplier=supplier||null;
+
+      msg.textContent=editing?'Updating product in Supabase...':'Saving product in Supabase...';
+      let saved;
+      if(editing){
+        const {data,error}=await db.from('products').update(row).eq('barcode',editingBarcode).select('*').single();
+        if(error) throw error;
+        saved=data;
+        const i=products.findIndex(p=>p.barcode===editingBarcode);
+        if(i>=0) products[i]=normalizeCloudProduct(saved); else products.push(normalizeCloudProduct(saved));
+      }else{
+        const {data,error}=await db.from('products').insert(row).select('*').single();
+        if(error) throw error;
+        saved=data;
+        products.push(normalizeCloudProduct(saved));
+      }
+      save(); renderProducts(); renderStock(); dashboard();
+      if(typeof populateBarcodeProducts==='function') populateBarcodeProducts();
+      editingBarcode=null;
+      document.getElementById('pb').readOnly=false;
+      const btn=document.querySelector('[onclick="saveProduct()"]'); if(btn) btn.textContent='SAVE PRODUCT';
+      msg.textContent=editing?'Product updated successfully in Supabase.':'Product saved successfully in Supabase.';
+      alert(editing?'Product updated successfully.':'Product saved successfully.');
+    }catch(e){
+      console.error('FINAL product save error:',e);
+      msg.textContent='';
+      alert('Supabase save failed. Nothing was changed locally.\n\n'+(e?.message||String(e)));
+    }
+  };
+
+  window.completeSale=async function(){
+    if(!cart.length) return alert('Bill is empty');
+    const db=cloud();
+    if(!db) return alert('Supabase is not connected. Please refresh and try again.');
+    const sub=cart.reduce((sum,c)=>{const p=products.find(x=>x.barcode===c.b);return sum+(p?Number(p.sell)*c.qty:0)},0);
+    const discount=Math.max(0,Number(document.getElementById('discount').value)||0);
+    if(discount>sub) return alert('Discount exceeds subtotal.');
+    const total=sub-discount;
+    const payment=document.getElementById('payment').value;
+    const cash=Number(document.getElementById('cash').value)||0;
+    if(payment==='CASH'&&cash<total) return alert('Cash received is less than total.');
+    for(const c of cart){const p=products.find(x=>x.barcode===c.b);if(!p||Number(p.stock)<Number(c.qty))return alert('Not enough stock for '+(p?.name||c.b));}
+    const items=cart.map(c=>{const p=products.find(x=>x.barcode===c.b);return{product:p,qty:Number(c.qty),barcode:p.barcode,name:p.name,cost:Number(p.cost||0),sell:Number(p.sell||0),total:Number(p.sell||0)*Number(c.qty)}});
+    const profit=items.reduce((a,i)=>a+(i.sell-i.cost)*i.qty,0)-discount;
+    const invoice=inv();
+    const sale={invoice,date:new Date().toISOString(),customer:document.getElementById('customer').value.trim(),phone:document.getElementById('phone').value.trim(),items:items.map(i=>({barcode:i.barcode,name:i.name,qty:i.qty,cost:i.cost,sell:i.sell,total:i.total})),subtotal:sub,discount,total,payment,cash,change:Math.max(0,cash-total),profit};
+    let cloudSaleId=null;
+    try{
+      const {data:existing,error:checkError}=await db.from('sales').select('id,invoice').eq('invoice',invoice).maybeSingle();
+      if(checkError) throw checkError;
+      if(existing) throw new Error('Invoice '+invoice+' already exists in Supabase. Please try again.');
+
+      const saleRow={invoice,sale_time:sale.date,subtotal:sub,discount,total,profit,payment,cash,balance:sale.change,customer:sale.customer||null};
+      const {data:savedSale,error:saleError}=await db.from('sales').insert(saleRow).select('*').single();
+      if(saleError) throw saleError;
+      cloudSaleId=savedSale.id;
+
+      const saleItems=items.map(i=>({sale_id:cloudSaleId,product_id:i.product.id,barcode:i.barcode,name:i.name,qty:i.qty,unit_price:i.sell,buy_price:i.cost,total:i.total,profit:(i.sell-i.cost)*i.qty}));
+      const {error:itemError}=await db.from('sale_items').insert(saleItems);
+      if(itemError) throw itemError;
+
+      for(const i of items){
+        const newStock=Math.max(0,Number(i.product.stock)-i.qty);
+        const {error:stockError}=await db.from('products').update({stock:newStock}).eq('id',i.product.id);
+        if(stockError) throw stockError;
+        const {error:moveError}=await db.from('stock_movements').insert({product_id:i.product.id,barcode:i.product.barcode,movement_type:'OUT',qty:i.qty,note:'Sale '+invoice});
+        if(moveError) throw moveError;
+      }
+
+      items.forEach(i=>{i.product.stock=Math.max(0,Number(i.product.stock)-i.qty)});
+      sales.push(sale); save(); last=sale; cart=[];
+      document.getElementById('discount').value=0; document.getElementById('cash').value=0; document.getElementById('customer').value=''; document.getElementById('phone').value='';
+      renderCart();renderProducts();renderStock();renderSales();dashboard();show(sale);
+      if(typeof loadProductsFromSupabase==='function') await loadProductsFromSupabase();
+    }catch(e){
+      console.error('FINAL cloud sale error:',e);
+      // Best-effort rollback if the sale header was created but a later step failed.
+      if(cloudSaleId){try{await db.from('sales').delete().eq('id',cloudSaleId);}catch(_){}}
+      alert('Sale was NOT completed. Supabase save failed.\n\n'+(e?.message||String(e)));
+    }
+  };
+
+  setTimeout(()=>{ reloadCloudProducts().catch(e=>console.warn('Final cloud reload:',e)); },1500);
+})();
+/* ===== END FINAL SUPABASE SCHEMA-SAFE FIX ===== */
