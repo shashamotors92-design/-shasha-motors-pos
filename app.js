@@ -1,4 +1,4 @@
-/* SHASHA MOTORS POS — FINAL CLEAN app.js
+/* SHASHA MOTORS POS — FINAL CLEAN app.js v2
    Existing 442-product seed preserved from the user's POS data.
 */
 
