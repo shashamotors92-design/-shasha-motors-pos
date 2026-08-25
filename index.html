@@ -4,10 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#17365d">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Shasha Motors POS">
-<link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon-192.png">
 <title>Shasha Motors POS — Final</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f7fb;color:#172033;font-family:Arial,"Noto Sans Sinhala",sans-serif}
@@ -60,16 +56,16 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px;borde
 <div class="grid2"><input id="pb" placeholder="Barcode"><input id="pp" placeholder="Part No"><input id="pn" placeholder="Product name"><input id="pg" placeholder="Category"><input id="pcost" type="number" placeholder="Cost price"><input id="psell" type="number" placeholder="Selling price"><input id="pstock" type="number" placeholder="Stock"><input id="pmin" type="number" value="2" placeholder="Low stock level"></div>
 <div class="row" style="margin-top:10px"><button class="green" onclick="saveProduct()">SAVE PRODUCT</button><button class="gray" onclick="clearForm()">CLEAR</button></div><div id="pmsg" class="muted"></div></div>
 
-<div class="card"><h3>Barcode Printing / Barcode මුද්‍රණය</h3><p class="muted">Product එක තෝරලා label ගණන සහ size එක තෝරන්න. Label එකේ SHASHA MOTORS, product name, selling price සහ barcode number print වේ.</p><div class="grid2"><select id="barcodeProduct"><option value="">Select product / භාණ්ඩය තෝරන්න</option></select><input id="barcodeQty" type="number" min="1" max="500" value="1" placeholder="Number of labels"></div><div class="grid2" style="margin-top:8px"><select id="barcodeSize"><option value="50x30">50 × 30 mm</option><option value="40x20">40 × 20 mm</option><option value="60x40">60 × 40 mm</option></select><button class="blue" type="button" onclick="printBarcodes()">🖨 PRINT BARCODES</button></div><div id="barcodeMsg" class="status"></div></div><div class="card"><h3>Backup / Restore</h3><div class="grid2"><button class="blue" onclick="backup()">⬇️ Export Backup</button><button class="gray" onclick="document.getElementById('restore').click()">⬆️ Restore</button></div><input id="restore" type="file" accept=".json" class="hidden" onchange="restoreBackup(event)"><p class="muted">Backup එක නිතර ගන්න.</p></div>
+<div class="card"><h3>Backup / Restore</h3><div class="grid2"><button class="blue" onclick="backup()">⬇️ Export Backup</button><button class="gray" onclick="document.getElementById('restore').click()">⬆️ Restore</button></div><input id="restore" type="file" accept=".json" class="hidden" onchange="restoreBackup(event)"><p class="muted">Backup එක නිතර ගන්න.</p></div>
 </section>
 </main>
 
 <div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div id="receipt" class="receipt"></div><div class="actions">
 <button class="blue" onclick="window.print()">🖨️ Print Receipt</button><button class="blue" onclick="pdf()">⬇️ Download PDF</button><button class="blue" onclick="share()">📤 Share</button><button class="blue full" onclick="closeModal()">🔴 Close</button>
 </div></div></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://unpkg.com/html5-qrcode" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/bwip-js@4.5.1/dist/bwip-js-min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 <script src="app.js" defer></script>
 </body></html>
