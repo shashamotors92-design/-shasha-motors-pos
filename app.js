@@ -66,14 +66,48 @@ async function loadProductsFromSupabase(){
   try{
     const {data,error}=await window.sbClient.from('products').select('id,barcode,name,part_no,buy,sell,stock,min_stock').order('id',{ascending:true});
     if(error)throw error;
-    if(Array.isArray(data)&&data.length){
-      const oldByBarcode=new Map(products.map(p=>[String(p.barcode),p]));
-      products=data.map(p=>({id:p.id,barcode:String(p.barcode||''),partNo:p.part_no||'',name:p.name||'',category:oldByBarcode.get(String(p.barcode))?.category||'',cost:Number(p.buy||0),sell:Number(p.sell||0),stock:Number(p.stock||0),min:Number(p.min_stock??2),supplier:oldByBarcode.get(String(p.barcode))?.supplier||''}));
-      save();
+
+    // IMPORTANT: Never replace the 442-product local seed with only the rows
+    // currently in Supabase. Merge cloud rows into the local catalogue instead.
+    const localByBarcode=new Map(products.map(p=>[String(p.barcode||''),p]));
+    const merged=[];
+    const cloudBarcodes=new Set();
+
+    for(const row of (Array.isArray(data)?data:[])){
+      const barcode=String(row.barcode||'').trim();
+      if(!barcode)continue;
+      cloudBarcodes.add(barcode);
+      const old=localByBarcode.get(barcode)||{};
+      merged.push({
+        ...old,
+        id:row.id,
+        barcode,
+        partNo:row.part_no||old.partNo||'',
+        name:row.name||old.name||'',
+        category:old.category||'',
+        cost:Number(row.buy??old.cost??0),
+        sell:Number(row.sell??old.sell??0),
+        stock:Number(row.stock??old.stock??0),
+        min:Number(row.min_stock??old.min??2),
+        supplier:old.supplier||''
+      });
     }
+
+    // Keep every local/seed product that is not yet in Supabase.
+    for(const p of products){
+      const barcode=String(p.barcode||'');
+      if(barcode&&!cloudBarcodes.has(barcode))merged.push({...p});
+    }
+
+    products=merged;
+    save();
     renderProducts();renderStock();dashboard();populateBarcodeProducts();
     return true;
-  }catch(e){console.error('Supabase product load failed:',e);return false;}
+  }catch(e){
+    console.error('Supabase product load failed:',e);
+    renderProducts();renderStock();dashboard();populateBarcodeProducts();
+    return false;
+  }
 }
 
 function renderStock(){
@@ -126,46 +160,121 @@ async function saveProduct(){
 
 async function completeSale(){
   if(!cart.length)return alert('Bill is empty');
-  const sub=cart.reduce((a,c)=>{const p=products.find(x=>x.barcode===c.b);return a+(p?Number(p.sell)*c.qty:0)},0),discount=Math.max(0,Number(document.getElementById('discount').value)||0);
-  if(discount>sub)return alert('Discount exceeds subtotal');
-  const total=sub-discount,payment=document.getElementById('payment').value,cash=Number(document.getElementById('cash').value)||0;
-  if(payment==='CASH'&&cash<total)return alert('Cash received is less than total');
-  for(const c of cart){const p=products.find(x=>x.barcode===c.b);if(!p||!p.id)return alert('Product is not linked to Supabase: '+c.b);if(Number(p.stock)<c.qty)return alert('Not enough stock for '+p.name);}
   if(!window.sbClient)return alert('Supabase is not connected. Sale was NOT completed.');
+
+  const sub=cart.reduce((a,c)=>{const p=products.find(x=>x.barcode===c.b);return a+(p?Number(p.sell)*c.qty:0)},0);
+  const discount=Math.max(0,Number(document.getElementById('discount').value)||0);
+  if(discount>sub)return alert('Discount exceeds subtotal');
+
+  const total=sub-discount;
+  const payment=document.getElementById('payment').value;
+  const cash=Number(document.getElementById('cash').value)||0;
+  if(payment==='CASH'&&cash<total)return alert('Cash received is less than total');
+
+  for(const c of cart){
+    const p=products.find(x=>x.barcode===c.b);
+    if(!p)return alert('Product not found: '+c.b);
+    if(!Number(p.sell))return alert('Selling price not set for '+p.name);
+    if(Number(p.stock)<c.qty)return alert('Not enough stock for '+p.name);
+  }
+
+  // Link any local/seed product that is not yet present in Supabase.
+  // This prevents the sale from failing just because that product has never
+  // been inserted into the cloud database before.
+  try{
+    const missing=cart.map(c=>products.find(x=>x.barcode===c.b)).filter(p=>p&&!p.id);
+    for(const p of missing){
+      const payload={
+        barcode:String(p.barcode),
+        part_no:p.partNo||null,
+        name:p.name,
+        buy:Number(p.cost||0),
+        sell:Number(p.sell||0),
+        stock:Number(p.stock||0),
+        min_stock:Number(p.min??2)
+      };
+      const r=await window.sbClient.from('products').insert(payload).select('id,barcode,name,part_no,buy,sell,stock,min_stock').single();
+      if(r.error){
+        // Another tab/device may have created it between our checks.
+        const again=await window.sbClient.from('products').select('id,barcode,name,part_no,buy,sell,stock,min_stock').eq('barcode',String(p.barcode)).maybeSingle();
+        if(again.error||!again.data)throw r.error;
+        Object.assign(p,{id:again.data.id,partNo:again.data.part_no||p.partNo||'',name:again.data.name||p.name,cost:Number(again.data.buy??p.cost??0),sell:Number(again.data.sell??p.sell??0),stock:Number(again.data.stock??p.stock??0),min:Number(again.data.min_stock??p.min??2)});
+      }else{
+        Object.assign(p,{id:r.data.id,barcode:String(r.data.barcode),partNo:r.data.part_no||p.partNo||'',name:r.data.name||p.name,cost:Number(r.data.buy??p.cost??0),sell:Number(r.data.sell??p.sell??0),stock:Number(r.data.stock??p.stock??0),min:Number(r.data.min_stock??p.min??2)});
+      }
+    }
+  }catch(e){
+    console.error('Supabase product linking failed:',e);
+    return alert('Product could not be linked to Supabase. Sale was NOT completed.\n\n'+(e?.message||e));
+  }
+
   const items=cart.map(c=>{const p=products.find(x=>x.barcode===c.b);return{barcode:p.barcode,name:p.name,qty:c.qty,cost:Number(p.cost||0),sell:Number(p.sell||0),total:Number(p.sell||0)*c.qty}});
   const profit=items.reduce((a,i)=>a+(i.sell-i.cost)*i.qty,0)-discount;
   const invoice=nextInvoice(),date=new Date().toISOString();
   let saleId=null;
-  const previousStocks = new Map();
+  const previousStocks=new Map();
+  const movementIds=[];
+
   try{
-    const ex=await window.sbClient.from('sales').select('id').eq('invoice',invoice).maybeSingle();if(ex.error)throw ex.error;if(ex.data)throw new Error('Invoice already exists: '+invoice);
-    const sr=await window.sbClient.from('sales').insert({invoice,sale_time:date,subtotal:sub,discount,total,profit,payment,cash,balance:payment==='CREDIT'?total:Math.max(0,cash-total),customer:document.getElementById('customer').value.trim()||null,phone:document.getElementById('phone').value.trim()||null}).select('id').single();if(sr.error)throw sr.error;
+    const ex=await window.sbClient.from('sales').select('id').eq('invoice',invoice).maybeSingle();
+    if(ex.error)throw ex.error;
+    if(ex.data)throw new Error('Invoice already exists: '+invoice);
+
+    const sr=await window.sbClient.from('sales').insert({
+      invoice,sale_time:date,subtotal:sub,discount,total,profit,payment,cash,
+      balance:payment==='CREDIT'?total:Math.max(0,cash-total),
+      customer:document.getElementById('customer').value.trim()||null,
+      phone:document.getElementById('phone').value.trim()||null
+    }).select('id').single();
+    if(sr.error)throw sr.error;
     saleId=sr.data.id;
-    const ir=await window.sbClient.from('sale_items').insert(items.map(i=>{const p=products.find(x=>x.barcode===i.barcode);return{sale_id:saleId,product_id:p.id,barcode:i.barcode,name:i.name,qty:i.qty,unit_price:i.sell,buy_price:i.cost,total:i.total,profit:(i.sell-i.cost)*i.qty}}));if(ir.error)throw ir.error;
-    const previousStocks = new Map();
-for(const i of items){
-  const p=products.find(x=>x.barcode===i.barcode);
-  const newStock=Number(p.stock)-i.qty;
-  previousStocks.set(p.id, Number(p.stock));
-  const ur=await window.sbClient.from('products').update({stock:newStock}).eq('id',p.id);
-  if(ur.error)throw ur.error;
-  const mr=await window.sbClient.from('stock_movements').insert({product_id:p.id,barcode:p.barcode,movement_type:'OUT',qty:i.qty,note:'Sale '+invoice});
-  if(mr.error)throw mr.error;
-  p.stock=newStock;
-}
+
+    const ir=await window.sbClient.from('sale_items').insert(items.map(i=>{
+      const p=products.find(x=>x.barcode===i.barcode);
+      return{sale_id:saleId,product_id:p.id,barcode:i.barcode,name:i.name,qty:i.qty,unit_price:i.sell,buy_price:i.cost,total:i.total,profit:(i.sell-i.cost)*i.qty};
+    }));
+    if(ir.error)throw ir.error;
+
+    for(const i of items){
+      const p=products.find(x=>x.barcode===i.barcode);
+      if(!p||!p.id)throw new Error('Product is not linked to Supabase: '+i.barcode);
+      const oldStock=Number(p.stock);
+      if(oldStock<i.qty)throw new Error('Not enough stock for '+p.name);
+      const newStock=oldStock-i.qty;
+      previousStocks.set(p.id,oldStock);
+
+      const ur=await window.sbClient.from('products').update({stock:newStock}).eq('id',p.id).select('id,stock').single();
+      if(ur.error)throw ur.error;
+      if(!ur.data)throw new Error('Stock update returned no product for '+p.name);
+
+      const mr=await window.sbClient.from('stock_movements').insert({product_id:p.id,barcode:p.barcode,movement_type:'OUT',qty:i.qty,note:'Sale '+invoice}).select('id').maybeSingle();
+      if(mr.error)throw mr.error;
+      if(mr.data?.id)movementIds.push(mr.data.id);
+      p.stock=newStock;
+    }
+
     const s={invoice,date,customer:document.getElementById('customer').value.trim(),phone:document.getElementById('phone').value.trim(),items,subtotal:sub,discount,total,payment,cash,change:payment==='CASH'?Math.max(0,cash-total):0,profit};
-    sales.push(s);save();last=s;cart=[];document.getElementById('discount').value=0;document.getElementById('cash').value=0;document.getElementById('customer').value='';document.getElementById('phone').value='';renderCart();renderProducts();renderStock();renderSales();dashboard();show(s);
+    sales.push(s);save();last=s;cart=[];
+    document.getElementById('discount').value=0;document.getElementById('cash').value=0;document.getElementById('customer').value='';document.getElementById('phone').value='';
+    renderCart();renderProducts();renderStock();renderSales();dashboard();show(s);
   }catch(e){
     console.error('Cloud sale:',e);
     try{
+      // Roll back stock first.
       for(const [productId,oldStock] of previousStocks){
         await window.sbClient.from('products').update({stock:oldStock}).eq('id',productId);
+      }
+      // Remove stock movement rows when their IDs are available.
+      for(const movementId of movementIds){
+        await window.sbClient.from('stock_movements').delete().eq('id',movementId);
       }
       if(saleId){
         await window.sbClient.from('sale_items').delete().eq('sale_id',saleId);
         await window.sbClient.from('sales').delete().eq('id',saleId);
       }
-    }catch(_){}
+    }catch(rollbackError){
+      console.error('Cloud sale rollback failed:',rollbackError);
+    }
     alert('Sale was NOT completed because the cloud save failed.\n\n'+(e?.message||e));
   }
 }
