@@ -1238,6 +1238,110 @@ function closeModal() {
   document.getElementById('modal')?.classList.add('hidden');
 }
 
+/* -------------------------------------------------------
+   RECEIPT PRINT — PRINT RECEIPT ONLY
+   Opens a clean print document so the POS screen, tabs,
+   stock list and buttons never appear in the printout.
+------------------------------------------------------- */
+function printReceipt() {
+  if (!last) return alert('No receipt available to print.');
+
+  const source = document.getElementById('receipt');
+  if (!source) return alert('Receipt area not found.');
+
+  const printWindow = window.open('', '_blank', 'width=420,height=800');
+  if (!printWindow) {
+    return alert('Pop-up blocked. Please allow pop-ups for the POS.');
+  }
+
+  const receiptHtml = source.innerHTML;
+
+  printWindow.document.open();
+  printWindow.document.write(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${esc(last.invoice)} - SHASHA MOTORS</title>
+<style>
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 80mm;
+    background: #fff;
+    color: #000;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11px;
+  }
+  body { padding: 3mm 3mm 4mm; }
+  .receipt-print {
+    width: 74mm;
+    margin: 0 auto;
+  }
+  .center { text-align: center; }
+  .hr {
+    border-top: 1px dashed #000;
+    margin: 3mm 0;
+    height: 0;
+  }
+  .line {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 3mm;
+    line-height: 1.45;
+  }
+  .line > *:last-child { text-align: right; }
+  .center b { font-size: 16px; }
+  .center { line-height: 1.4; }
+  .line b { font-size: 12px; }
+  .item-name {
+    font-weight: 700;
+    margin-top: 2mm;
+    word-break: break-word;
+  }
+  @media print {
+    html, body { width: 80mm; }
+  }
+</style>
+</head>
+<body>
+  <div class="receipt-print">
+    ${receiptHtml}
+  </div>
+  <script>
+    window.onload = function () {
+      setTimeout(function () {
+        window.focus();
+        window.print();
+      }, 250);
+    };
+  <\/script>
+</body>
+</html>`);
+  printWindow.document.close();
+}
+
+/* If the existing index.html still has an old window.print() button,
+   redirect only the receipt-print button to the clean print window.
+   No index.html edit is required. */
+function installReceiptPrintHandler() {
+  document.addEventListener('click', function (event) {
+    const button = event.target.closest('button');
+    if (!button) return;
+    const text = (button.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (text.includes('print receipt')) {
+      event.preventDefault();
+      event.stopPropagation();
+      printReceipt();
+    }
+  }, true);
+}
+
 function pdf() {
   if (!last) return;
 
@@ -1669,6 +1773,8 @@ document.getElementById('payment')?.addEventListener(
   'change',
   renderCart
 );
+
+installReceiptPrintHandler();
 
 renderProducts();
 renderCart();
