@@ -23,6 +23,7 @@ try {
 const PK = 'shasha_final_products_v1';
 const SK = 'shasha_final_sales_v1';
 const IK = 'shasha_final_invoice_v1';
+const SYNC_KEY = 'shasha_final_pending_sync_v1';
 
 /*
  IMPORTANT:
@@ -32,6 +33,15 @@ const IK = 'shasha_final_invoice_v1';
 */
 let products = [];
 let sales = [];
+let pendingSales = [];
+
+try {
+  const savedPending = JSON.parse(localStorage.getItem(SYNC_KEY) || '[]');
+  pendingSales = Array.isArray(savedPending) ? savedPending : [];
+} catch (e) {
+  console.warn('Could not read pending cloud sync queue.', e);
+  pendingSales = [];
+}
 
 try {
   const savedProducts = JSON.parse(localStorage.getItem(PK) || 'null');
@@ -649,6 +659,324 @@ async function saveProduct() {
 }
 
 /* -------------------------------------------------------
+   CLOUD SYNC QUEUE
+------------------------------------------------------- */
+
+function savePendingSales() {
+  localStorage.setItem(SYNC_KEY, JSON.stringify(pendingSales));
+}
+
+function enqueueSaleForSync(sale) {
+  if (!sale?.invoice) return;
+
+  const existing = pendingSales.find(x => x.invoice === sale.invoice);
+  if (!existing) {
+    pendingSales.push({
+      invoice:sale.invoice,
+      sale,
+      items:sale.items || [],
+      attempts:0,
+      lastError:'',
+      queuedAt:new Date().toISOString()
+    });
+  } else {
+    existing.sale = sale;
+    existing.items = sale.items || [];
+  }
+
+  savePendingSales();
+}
+
+function removePendingSale(invoice) {
+  pendingSales = pendingSales.filter(x => x.invoice !== invoice);
+  savePendingSales();
+}
+
+async function ensureCloudProduct(item) {
+  const barcode = String(item.barcode || '').trim();
+  if (!barcode) throw new Error('Missing barcode for ' + item.name);
+
+  const found = await window.sbClient
+    .from('products')
+    .select('id,barcode,name,part_no,buy,sell,stock,min_stock')
+    .eq('barcode', barcode)
+    .maybeSingle();
+
+  if (found.error) throw found.error;
+  if (found.data) return found.data;
+
+  const local = products.find(p => String(p.barcode) === barcode);
+  if (!local) throw new Error('Local product not found: ' + barcode);
+
+  /*
+    Local stock already includes offline sales. If this product does not
+    exist in Supabase yet, reconstruct the stock value that existed before
+    all queued sales for this barcode, then the normal OUT movements below
+    bring cloud stock back down exactly to the current local stock.
+  */
+  const queuedQty = pendingSales.reduce((sum, r) => {
+    return sum + (r.items || [])
+      .filter(i => String(i.barcode) === barcode)
+      .reduce((n, i) => n + Number(i.qty || 0), 0);
+  }, 0);
+
+  const inserted = await window.sbClient
+    .from('products')
+    .insert({
+      barcode,
+      part_no:local.partNo || null,
+      name:local.name || item.name,
+      buy:Number(local.cost || item.cost || 0),
+      sell:Number(local.sell || item.sell || 0),
+      stock:Number(local.stock || 0) + queuedQty,
+      min_stock:Number(local.min ?? 2)
+    })
+    .select('id,barcode,name,part_no,buy,sell,stock,min_stock')
+    .single();
+
+  if (!inserted.error) return inserted.data;
+
+  /* Another device may have inserted it between the two requests. */
+  const retry = await window.sbClient
+    .from('products')
+    .select('id,barcode,name,part_no,buy,sell,stock,min_stock')
+    .eq('barcode', barcode)
+    .maybeSingle();
+
+  if (retry.error || !retry.data) {
+    throw inserted.error || new Error('Could not create cloud product: ' + barcode);
+  }
+
+  return retry.data;
+}
+
+async function syncOneSale(record) {
+  if (!window.sbClient) throw new Error('Supabase is unavailable');
+
+  const sale = record.sale;
+  const items = Array.isArray(record.items) ? record.items : [];
+  const cloudProducts = {};
+
+  /* 1. Make sure every sold product exists in the cloud. */
+  for (const item of items) {
+    cloudProducts[String(item.barcode)] = await ensureCloudProduct(item);
+  }
+
+  /* 2. Create the cloud sale only once (invoice is the idempotency key). */
+  let cloudSale;
+
+  const existingSale = await window.sbClient
+    .from('sales')
+    .select('id,invoice')
+    .eq('invoice', sale.invoice)
+    .maybeSingle();
+
+  if (existingSale.error) throw existingSale.error;
+
+  if (existingSale.data) {
+    cloudSale = existingSale.data;
+  } else {
+    const created = await window.sbClient
+      .from('sales')
+      .insert({
+        invoice:sale.invoice,
+        sale_time:sale.date,
+        subtotal:Number(sale.subtotal || 0),
+        discount:Number(sale.discount || 0),
+        total:Number(sale.total || 0),
+        profit:Number(sale.profit || 0),
+        payment:sale.payment || 'CASH',
+        cash:Number(sale.cash || 0),
+        balance:sale.payment === 'CREDIT'
+          ? Number(sale.total || 0)
+          : Number(sale.change || 0),
+        customer:sale.customer || null,
+        phone:sale.phone || null
+      })
+      .select('id,invoice')
+      .single();
+
+    if (created.error) {
+      /* A second device may have created the same invoice. */
+      const retry = await window.sbClient
+        .from('sales')
+        .select('id,invoice')
+        .eq('invoice', sale.invoice)
+        .maybeSingle();
+
+      if (retry.error || !retry.data) throw created.error;
+      cloudSale = retry.data;
+    } else {
+      cloudSale = created.data;
+    }
+  }
+
+  /* 3. Add sale items once. */
+  const existingItems = await window.sbClient
+    .from('sale_items')
+    .select('id,barcode')
+    .eq('sale_id', cloudSale.id);
+
+  if (existingItems.error) throw existingItems.error;
+
+  const existingBarcodes = new Set(
+    (existingItems.data || []).map(x => String(x.barcode || ''))
+  );
+
+  const missingItems = items
+    .filter(i => !existingBarcodes.has(String(i.barcode)))
+    .map(item => {
+      const cp = cloudProducts[String(item.barcode)];
+      return {
+        sale_id:cloudSale.id,
+        product_id:cp?.id || null,
+        barcode:item.barcode,
+        name:item.name,
+        qty:Number(item.qty),
+        unit_price:Number(item.sell || 0),
+        buy_price:Number(item.cost || 0),
+        total:Number(item.total || 0),
+        profit:(Number(item.sell || 0)-Number(item.cost || 0))*Number(item.qty)
+      };
+    });
+
+  if (missingItems.length) {
+    const insertedItems = await window.sbClient
+      .from('sale_items')
+      .insert(missingItems);
+
+    if (insertedItems.error) throw insertedItems.error;
+  }
+
+  /* 4. Decrease cloud stock safely. */
+  for (const item of items) {
+    const cp = cloudProducts[String(item.barcode)];
+    if (!cp?.id) throw new Error('Cloud product has no ID: ' + item.barcode);
+
+    const movementNote = 'Sale ' + sale.invoice;
+    record.stockDone = record.stockDone || {};
+    record.movementDone = record.movementDone || {};
+
+    const alreadyMoved = await window.sbClient
+      .from('stock_movements')
+      .select('id')
+      .eq('product_id', cp.id)
+      .eq('note', movementNote)
+      .limit(1)
+      .maybeSingle();
+
+    if (alreadyMoved.error) throw alreadyMoved.error;
+    if (alreadyMoved.data) {
+      record.stockDone[String(item.barcode)] = true;
+      record.movementDone[String(item.barcode)] = true;
+      savePendingSales();
+      continue;
+    }
+
+    /*
+      Optimistic locking:
+      the UPDATE succeeds only if the stock value we read is still the
+      current value. This prevents two devices from silently overwriting
+      each other's stock changes.
+    */
+    const current = await window.sbClient
+      .from('products')
+      .select('id,stock')
+      .eq('id', cp.id)
+      .single();
+
+    if (current.error) throw current.error;
+
+    const oldStock = Number(current.data.stock || 0);
+    const qty = Number(item.qty || 0);
+
+    if (oldStock < qty) {
+      throw new Error(
+        'Cloud stock conflict for ' + item.name +
+        '. Cloud stock: ' + oldStock + ', sale qty: ' + qty
+      );
+    }
+
+    if (!record.stockDone[String(item.barcode)]) {
+      const newStock = oldStock - qty;
+
+      const updated = await window.sbClient
+        .from('products')
+        .update({stock:newStock})
+        .eq('id', cp.id)
+        .eq('stock', oldStock)
+        .select('id,stock')
+        .maybeSingle();
+
+      if (updated.error) throw updated.error;
+      if (!updated.data) {
+        throw new Error(
+          'Cloud stock changed on another device. Sale kept locally and will retry.'
+        );
+      }
+
+      /* Save the checkpoint immediately after the stock update. */
+      record.stockDone[String(item.barcode)] = true;
+      savePendingSales();
+    }
+
+    if (!record.movementDone[String(item.barcode)]) {
+      const movement = await window.sbClient
+        .from('stock_movements')
+        .insert({
+          product_id:cp.id,
+          barcode:item.barcode,
+          movement_type:'OUT',
+          qty,
+          note:movementNote
+        });
+
+      if (movement.error) {
+        /* Stock is already marked done; retry only the movement. */
+        throw movement.error;
+      }
+
+      record.movementDone[String(item.barcode)] = true;
+      savePendingSales();
+    }
+  }
+
+  return true;
+}
+
+async function syncPendingSales() {
+  if (!window.sbClient || !pendingSales.length) return;
+
+  /* Work oldest-first and stop on the first failure so the queue remains ordered. */
+  for (const record of [...pendingSales]) {
+    try {
+      record.attempts = Number(record.attempts || 0) + 1;
+      record.lastError = '';
+      savePendingSales();
+
+      await syncOneSale(record);
+      removePendingSale(record.invoice);
+
+      console.log('Cloud sync complete:', record.invoice);
+    } catch (e) {
+      record.lastError = e?.message || String(e);
+      savePendingSales();
+      console.warn('Pending sale sync failed:', record.invoice, e);
+      break;
+    }
+  }
+}
+
+/* Retry pending sales when the app comes online and periodically while open. */
+window.addEventListener('online', () => {
+  syncPendingSales();
+});
+
+setInterval(() => {
+  syncPendingSales();
+}, 30000);
+
+/* -------------------------------------------------------
    COMPLETE SALE
 ------------------------------------------------------- */
 
@@ -663,9 +991,7 @@ async function completeSale() {
     );
 
     return a + (
-      p
-        ? Number(p.sell) * Number(c.qty)
-        : 0
+      p ? Number(p.sell) * Number(c.qty) : 0
     );
   },0);
 
@@ -679,32 +1005,22 @@ async function completeSale() {
   }
 
   const total = sub - discount;
-
-  const payment =
-    document.getElementById('payment')?.value || 'CASH';
-
-  const cash =
-    Number(document.getElementById('cash')?.value) || 0;
+  const payment = document.getElementById('payment')?.value || 'CASH';
+  const cash = Number(document.getElementById('cash')?.value) || 0;
 
   if (payment === 'CASH' && cash < total) {
     return alert('Cash received is less than total');
   }
-
-  /* Validate everything BEFORE changing stock. */
 
   for (const c of cart) {
     const p = products.find(
       x => String(x.barcode) === String(c.b)
     );
 
-    if (!p) {
-      return alert('Product not found: ' + c.b);
-    }
+    if (!p) return alert('Product not found: ' + c.b);
 
     if (!Number(p.sell)) {
-      return alert(
-        'Selling price not set for ' + p.name
-      );
+      return alert('Selling price not set for ' + p.name);
     }
 
     if (Number(p.stock) < Number(c.qty)) {
@@ -731,26 +1047,16 @@ async function completeSale() {
     };
   });
 
-  const profit =
-    items.reduce(
-      (a,i) =>
-        a + (i.sell - i.cost) * i.qty,
-      0
-    ) - discount;
+  const profit = items.reduce(
+    (a,i) => a + (i.sell-i.cost)*i.qty,
+    0
+  ) - discount;
 
   const invoice = nextInvoice();
   const date = new Date().toISOString();
-
-  const customer =
-    document.getElementById('customer')?.value.trim() || '';
-
-  const phone =
-    document.getElementById('phone')?.value.trim() || '';
-
-  const change =
-    payment === 'CASH'
-      ? Math.max(0,cash-total)
-      : 0;
+  const customer = document.getElementById('customer')?.value.trim() || '';
+  const phone = document.getElementById('phone')?.value.trim() || '';
+  const change = payment === 'CASH' ? Math.max(0,cash-total) : 0;
 
   const sale = {
     invoice,
@@ -767,10 +1073,7 @@ async function completeSale() {
     profit
   };
 
-  /* --------------------------------------------
-     LOCAL SALE FIRST
-  -------------------------------------------- */
-
+  /* LOCAL SALE FIRST — never wait for Supabase. */
   try {
     for (const c of cart) {
       const p = products.find(
@@ -786,6 +1089,7 @@ async function completeSale() {
     }
 
     sales.push(sale);
+    enqueueSaleForSync(sale);
     save();
 
     last = sale;
@@ -815,7 +1119,6 @@ async function completeSale() {
     renderSales();
     dashboard();
 
-    /* Receipt appears immediately. */
     show(sale);
 
   } catch (e) {
@@ -826,194 +1129,8 @@ async function completeSale() {
     );
   }
 
-  /* --------------------------------------------
-     CLOUD SYNC — OPTIONAL
-     -------------------------------------------- */
-
-  if (!window.sbClient) {
-    console.warn(
-      'Supabase unavailable. Sale completed locally.'
-    );
-    return;
-  }
-
-  try {
-    /*
-      Find cloud products by barcode.
-      Missing products are NOT inserted here.
-      This is intentional: a missing cloud row
-      must never cancel a completed POS sale.
-    */
-
-    const barcodes = items
-      .map(i => String(i.barcode))
-      .filter(Boolean);
-
-    let cloudProducts = {};
-
-    if (barcodes.length) {
-      const {data,error} =
-        await window.sbClient
-          .from('products')
-          .select(
-            'id,barcode,name,part_no,buy,sell,stock,min_stock'
-          )
-          .in('barcode',barcodes);
-
-      if (error) throw error;
-
-      for (const p of (data || [])) {
-        cloudProducts[String(p.barcode)] = p;
-      }
-    }
-
-    /* Update stock only for products that already exist in cloud. */
-
-    for (const item of items) {
-      const cp =
-        cloudProducts[String(item.barcode)];
-
-      if (!cp) {
-        console.warn(
-          'Cloud product missing:',
-          item.barcode
-        );
-        continue;
-      }
-
-      const newStock = Math.max(
-        0,
-        Number(cp.stock) - Number(item.qty)
-      );
-
-      const {error:updateError} =
-        await window.sbClient
-          .from('products')
-          .update({stock:newStock})
-          .eq('id',cp.id);
-
-      if (updateError) {
-        console.warn(
-          'Cloud stock update failed:',
-          updateError
-        );
-        continue;
-      }
-
-      try {
-        await window.sbClient
-          .from('stock_movements')
-          .insert({
-            product_id:cp.id,
-            barcode:item.barcode,
-            movement_type:'OUT',
-            qty:item.qty,
-            note:'Sale '+invoice
-          });
-      } catch (movementError) {
-        console.warn(
-          'Stock movement failed:',
-          movementError
-        );
-      }
-    }
-
-    /* Save sale to cloud. */
-
-    let cloudSaleId = null;
-
-    try {
-      const {data,error} =
-        await window.sbClient
-          .from('sales')
-          .insert({
-            invoice,
-            sale_time:date,
-            subtotal:sub,
-            discount,
-            total,
-            profit,
-            payment,
-            cash,
-            balance:
-              payment === 'CREDIT'
-                ? total
-                : change,
-            customer:customer || null,
-            phone:phone || null
-          })
-          .select('id')
-          .single();
-
-      if (error) throw error;
-
-      cloudSaleId = data?.id || null;
-
-    } catch (cloudSaleError) {
-      console.warn(
-        'Cloud sale save failed. Local sale is safe.',
-        cloudSaleError
-      );
-      return;
-    }
-
-    /* Save sale items if cloud sale was created. */
-
-    if (cloudSaleId) {
-      try {
-        const cloudItems = [];
-
-        for (const item of items) {
-          const cp =
-            cloudProducts[String(item.barcode)];
-
-          if (!cp) continue;
-
-          cloudItems.push({
-            sale_id:cloudSaleId,
-            product_id:cp.id,
-            barcode:item.barcode,
-            name:item.name,
-            qty:item.qty,
-            unit_price:item.sell,
-            buy_price:item.cost,
-            total:item.total,
-            profit:
-              (item.sell-item.cost)*item.qty
-          });
-        }
-
-        if (cloudItems.length) {
-          const {error} =
-            await window.sbClient
-              .from('sale_items')
-              .insert(cloudItems);
-
-          if (error) {
-            console.warn(
-              'Cloud sale items failed:',
-              error
-            );
-          }
-        }
-      } catch (e) {
-        console.warn(
-          'Cloud sale items failed:',
-          e
-        );
-      }
-    }
-
-  } catch (e) {
-    /*
-      NEVER tell the customer that the sale failed.
-      The local sale has already completed safely.
-    */
-    console.warn(
-      'Supabase sync failed. Sale completed locally.',
-      e
-    );
-  }
+  /* Try immediately, but the queue remains if it fails. */
+  await syncPendingSales();
 }
 
 /* -------------------------------------------------------
@@ -1562,8 +1679,9 @@ populateBarcodeProducts();
 
 /*
  IMPORTANT:
- We intentionally DO NOT call loadProductsFromSupabase()
- automatically.
-
+ We intentionally DO NOT call loadProductsFromSupabase() automatically.
  Your existing local 442-product catalogue stays untouched.
+
+ Pending local sales are synced to Supabase in the background.
 */
+syncPendingSales();
