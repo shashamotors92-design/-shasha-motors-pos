@@ -361,6 +361,15 @@ function renderStock() {
   `).join('') || '<p class="muted">No products found.</p>';
 }
 
+function openSaleByInvoice(invoice) {
+  const sale = sales.find(z => String(z.invoice) === String(invoice));
+  if (!sale) return alert('Invoice not found.');
+
+  /* IMPORTANT: Sales-history invoices must become the active receipt. */
+  last = sale;
+  show(sale);
+}
+
 function renderSales() {
   const list = document.getElementById('salesList');
   if (!list) return;
@@ -369,7 +378,7 @@ function renderSales() {
     <div class="product">
       <div class="product-name">
         <a href="#"
-          onclick="show(sales.find(z=>z.invoice==='${q(s.invoice)}'));return false">
+          onclick="openSaleByInvoice('${q(s.invoice)}');return false">
           ${esc(s.invoice)}
         </a>
       </div>
@@ -1262,85 +1271,124 @@ function getPrintableSale() {
   return null;
 }
 
+function buildReceiptHtml(sale) {
+  if (!sale) return '';
+
+  return `
+    <div class="receipt-paper">
+      <div class="center brand"><b>SHASHA MOTORS POS</b></div>
+      <div class="center address">
+        7/1A, Thambilwaththa, Makandana,<br>
+        Piliyandala<br>
+        Phone: 0771112344
+      </div>
+      <div class="hr"></div>
+
+      <div class="line"><span>Invoice</span><b>${esc(sale.invoice)}</b></div>
+      <div class="line"><span>Date</span><span>${new Date(sale.date).toLocaleString()}</span></div>
+      ${sale.customer ? `<div class="line"><span>Customer</span><span>${esc(sale.customer)}</span></div>` : ''}
+      ${sale.phone ? `<div class="line"><span>Phone</span><span>${esc(sale.phone)}</span></div>` : ''}
+
+      <div class="hr"></div>
+      ${(sale.items || []).map(i => `
+        <div class="item">
+          <div class="item-name"><b>${esc(i.name)}</b></div>
+          <div class="line">
+            <span>${i.qty} × Rs. ${m(i.sell)}</span>
+            <span>Rs. ${m(i.total)}</span>
+          </div>
+        </div>
+      `).join('')}
+
+      <div class="hr"></div>
+      <div class="line"><span>Subtotal</span><span>Rs. ${m(sale.subtotal)}</span></div>
+      <div class="line"><span>Discount</span><span>Rs. ${m(sale.discount)}</span></div>
+      <div class="line total"><b>Grand Total</b><b>Rs. ${m(sale.total)}</b></div>
+      <div class="line"><span>Payment</span><span>${esc(sale.payment)}</span></div>
+      ${sale.payment === 'CASH' ? `
+        <div class="line"><span>Cash</span><span>Rs. ${m(sale.cash)}</span></div>
+        <div class="line"><span>Change</span><span>Rs. ${m(sale.change)}</span></div>
+      ` : ''}
+      ${sale.payment === 'CREDIT' ? `<div class="line"><b>Credit Due</b><b>Rs. ${m(sale.total)}</b></div>` : ''}
+      <div class="hr"></div>
+      <div class="center thanks">Thank you! / ස්තුතියි!</div>
+    </div>
+  `;
+}
+
+function getPrintableSale() {
+  if (last && last.invoice) return last;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(SK) || '[]');
+    if (Array.isArray(saved) && saved.length) {
+      const latest = saved[saved.length - 1];
+      if (latest && latest.invoice) {
+        last = latest;
+        return latest;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not restore last sale for printing.', e);
+  }
+
+  return null;
+}
+
 function printReceipt() {
   const sale = getPrintableSale();
   if (!sale) return alert('No receipt available to print.');
-
-  const source = document.getElementById('receipt');
-  if (!source) return alert('Receipt area not found.');
 
   const printWindow = window.open('', '_blank', 'width=420,height=800');
   if (!printWindow) {
     return alert('Pop-up blocked. Please allow pop-ups for the POS.');
   }
 
-  const receiptHtml = source.innerHTML;
+  const receiptHtml = buildReceiptHtml(sale);
 
   printWindow.document.open();
   printWindow.document.write(`<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(sale.invoice)} - SHASHA MOTORS</title>
 <style>
-  @page {
-    size: 80mm auto;
-    margin: 0;
-  }
+  @page { size: A4 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
-  html, body {
-    margin: 0;
-    padding: 0;
-    width: 80mm;
-    background: #fff;
-    color: #000;
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: 11px;
-  }
-  body { padding: 3mm 3mm 4mm; }
-  .receipt-print {
-    width: 74mm;
+  html, body { margin:0; padding:0; background:#fff; color:#000; }
+  body { font-family: Arial, Helvetica, sans-serif; }
+  .receipt-paper {
+    width: 100%;
+    max-width: 180mm;
     margin: 0 auto;
+    padding: 8mm;
+    font-size: 12pt;
+    line-height: 1.4;
   }
-  .center { text-align: center; }
-  .hr {
-    border-top: 1px dashed #000;
-    margin: 3mm 0;
-    height: 0;
-  }
-  .line {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 3mm;
-    line-height: 1.45;
-  }
-  .line > *:last-child { text-align: right; }
-  .center b { font-size: 16px; }
-  .center { line-height: 1.4; }
-  .line b { font-size: 12px; }
-  .item-name {
-    font-weight: 700;
-    margin-top: 2mm;
-    word-break: break-word;
-  }
+  .center { text-align:center; }
+  .brand { font-size: 20pt; margin-bottom: 3mm; }
+  .address { font-size: 12pt; }
+  .hr { border-top: 1px dashed #000; margin: 5mm 0; height:0; }
+  .line { display:flex; justify-content:space-between; gap:10mm; margin:2mm 0; }
+  .line > *:last-child { text-align:right; }
+  .item { margin:4mm 0; }
+  .item-name { font-size: 13pt; word-break: break-word; }
+  .total { font-size: 14pt; margin-top:3mm; }
+  .thanks { margin-top:2mm; font-size:12pt; }
   @media print {
-    html, body { width: 80mm; }
+    body { width:auto; }
+    .receipt-paper { max-width:none; }
   }
 </style>
 </head>
 <body>
-  <div class="receipt-print">
-    ${receiptHtml}
-  </div>
-  <script>
-    window.onload = function () {
-      setTimeout(function () {
-        window.focus();
-        window.print();
-      }, 250);
-    };
-  <\/script>
+${receiptHtml}
+<script>
+window.onload = function () {
+  setTimeout(function () { window.focus(); window.print(); }, 300);
+};
+<\/script>
 </body>
 </html>`);
   printWindow.document.close();
@@ -1364,24 +1412,59 @@ function installReceiptPrintHandler() {
 }
 
 function pdf() {
-  if (!last) return;
+  const sale = getPrintableSale();
+  if (!sale) return alert('No receipt available to create PDF.');
 
-  if (window.html2pdf) {
-    html2pdf()
-      .set({
-        filename:last.invoice+'.pdf',
-        margin:8,
-        html2canvas:{scale:2},
-        jsPDF:{
-          unit:'mm',
-          format:'a4'
-        }
-      })
-      .from(document.getElementById('receipt'))
-      .save();
-  } else {
-    alert('PDF library loading. Try again.');
+  if (!window.html2pdf) {
+    return alert('PDF library loading. Please wait a moment and try again.');
   }
+
+  /* Build a completely independent PDF document. This avoids capturing the
+     modal/UI and prevents the old "address only" PDF problem. */
+  const holder = document.createElement('div');
+  holder.style.position = 'fixed';
+  holder.style.left = '-100000px';
+  holder.style.top = '0';
+  holder.style.width = '180mm';
+  holder.style.background = '#fff';
+  holder.style.color = '#000';
+  holder.innerHTML = buildReceiptHtml(sale);
+
+  const style = document.createElement('style');
+  style.textContent = `
+    .receipt-paper { width:180mm; margin:0; padding:8mm; background:#fff; color:#000; font-family:Arial,Helvetica,sans-serif; font-size:12pt; line-height:1.4; }
+    .center{text-align:center}.brand{font-size:20pt;margin-bottom:3mm}.address{font-size:12pt}
+    .hr{border-top:1px dashed #000;margin:5mm 0;height:0}.line{display:flex;justify-content:space-between;gap:10mm;margin:2mm 0}.line>*:last-child{text-align:right}
+    .item{margin:4mm 0}.item-name{font-size:13pt;word-break:break-word}.total{font-size:14pt;margin-top:3mm}.thanks{margin-top:2mm;font-size:12pt}
+  `;
+  holder.prepend(style);
+  document.body.appendChild(holder);
+
+  const opt = {
+    margin: 8,
+    filename: String(sale.invoice).replace(/[^a-z0-9_-]/gi, '_') + '.pdf',
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      scrollX: 0,
+      scrollY: 0
+    },
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+
+  html2pdf()
+    .set(opt)
+    .from(holder)
+    .save()
+    .then(() => holder.remove())
+    .catch(err => {
+      console.error('PDF generation failed:', err);
+      holder.remove();
+      alert('PDF could not be created. Please try again.');
+    });
 }
 
 async function share() {
