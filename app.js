@@ -1243,8 +1243,28 @@ function closeModal() {
    Opens a clean print document so the POS screen, tabs,
    stock list and buttons never appear in the printout.
 ------------------------------------------------------- */
+function getPrintableSale() {
+  if (last && last.invoice) return last;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(SK) || '[]');
+    if (Array.isArray(saved) && saved.length) {
+      const latest = saved[saved.length - 1];
+      if (latest && latest.invoice) {
+        last = latest;
+        return latest;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not restore last sale for printing.', e);
+  }
+
+  return null;
+}
+
 function printReceipt() {
-  if (!last) return alert('No receipt available to print.');
+  const sale = getPrintableSale();
+  if (!sale) return alert('No receipt available to print.');
 
   const source = document.getElementById('receipt');
   if (!source) return alert('Receipt area not found.');
@@ -1261,7 +1281,7 @@ function printReceipt() {
 <html>
 <head>
 <meta charset="utf-8">
-<title>${esc(last.invoice)} - SHASHA MOTORS</title>
+<title>${esc(sale.invoice)} - SHASHA MOTORS</title>
 <style>
   @page {
     size: 80mm auto;
@@ -1337,6 +1357,7 @@ function installReceiptPrintHandler() {
     if (text.includes('print receipt')) {
       event.preventDefault();
       event.stopPropagation();
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
       printReceipt();
     }
   }, true);
