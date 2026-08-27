@@ -799,8 +799,7 @@ async function syncOneSale(record) {
         balance:sale.payment === 'CREDIT'
           ? Number(sale.total || 0)
           : Number(sale.change || 0),
-        customer:sale.customer || null,
-        phone:sale.phone || null
+        customer:sale.customer || null
       })
       .select('id,invoice')
       .single();
