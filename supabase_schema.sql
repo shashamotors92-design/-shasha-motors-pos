@@ -28,3 +28,7 @@ alter table public.products enable row level security;
 alter table public.sales enable row level security;
 alter table public.sale_items enable row level security;
 alter table public.stock_movements enable row level security;
+
+-- FIX: app.js stores customer phone in public.sales.
+alter table public.sales
+add column if not exists phone text;
