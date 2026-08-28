@@ -17,7 +17,22 @@ function errText(e){return e?.message||e?.details||e?.hint||e?.code||String(e)}
 async function init(){
   products=read(PK,[]); sales=read(SK,[]); pending=read(SYNC_KEY,[]);
   renderProducts();renderCart();renderStock();renderSales();dashboard();updateSync();
-  try{sbClient=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false}})}
+  try{sbClient=window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY,
+  {
+    auth:{
+      persistSession:false,
+      autoRefreshToken:false
+    },
+    global:{
+      headers:{
+        apikey:SUPABASE_KEY,
+        Authorization:"Bearer "+SUPABASE_KEY
+      }
+    }
+  }
+)}
   catch(e){status("⚠️ Supabase library unavailable — local mode","bad");return}
   await testCloud();
 }
