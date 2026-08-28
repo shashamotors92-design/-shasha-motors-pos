@@ -1,11 +1,18 @@
-SHASHA MOTORS POS — COMPLETE
-1. Run supabase_schema.sql in the same Supabase project.
-2. Upload ALL files to GitHub repository root.
-3. GitHub Pages: main branch / root.
-4. Open the new Pages URL in Safari.
-5. If an old Home Screen app exists, remove it and add the new site again.
-6. Every sale is saved locally FIRST. Cloud failure does not cancel the sale.
-7. Pending sales retry automatically every 30 seconds and when online.
-8. More -> Sync Pending Sales forces a retry.
-9. Existing localStorage keys are preserved: shasha_final_products_v1, shasha_final_sales_v1, shasha_final_invoice_v1.
-IMPORTANT: the SQL policies intentionally allow anonymous browser access. For production multi-user use, add authentication and stricter RLS.
+SHASHA MOTORS POS — FIXED VERSION
+
+Files:
+- index.html
+- app.js
+- supabase_schema.sql
+- manifest.json
+
+IMPORTANT:
+1. First run the COMPLETE `supabase_schema.sql` in Supabase SQL Editor.
+2. Do NOT delete the existing products table/data.
+3. Then upload all files to the GitHub repository ROOT (same level as index.html).
+4. GitHub Pages should publish index.html.
+5. Open the POS and tap More -> Refresh Products.
+6. The status should say: Supabase database connected ✓
+
+The new app tests Supabase with a normal SELECT instead of the old head/count check and shows the actual database error if something is wrong.
+Sales use the `pos_complete_sale` RPC for an atomic cloud transaction. If the RPC has not been installed yet, the app has a fallback sequence.
