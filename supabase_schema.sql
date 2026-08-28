@@ -1,34 +1,13 @@
--- SHASHA MOTORS POS - SUPABASE SCHEMA
-create table if not exists public.products (
- id bigint generated always as identity primary key,
- barcode text unique not null, name text not null, part_no text,
- buy numeric(12,2) not null default 0, sell numeric(12,2) not null default 0,
- stock integer not null default 0, min_stock integer not null default 0,
- created_at timestamptz not null default now(), updated_at timestamptz not null default now()
-);
-create table if not exists public.sales (
- id bigint generated always as identity primary key, invoice text unique not null,
- sale_time timestamptz not null default now(), subtotal numeric(12,2) not null default 0,
- discount numeric(12,2) not null default 0, total numeric(12,2) not null default 0,
- profit numeric(12,2) not null default 0, payment text not null default 'CASH',
- cash numeric(12,2) not null default 0, balance numeric(12,2) not null default 0, customer text
-);
-create table if not exists public.sale_items (
- id bigint generated always as identity primary key, sale_id bigint not null references public.sales(id) on delete cascade,
- product_id bigint not null references public.products(id), barcode text not null, name text not null,
- qty integer not null check(qty>0), unit_price numeric(12,2) not null default 0,
- buy_price numeric(12,2) not null default 0, total numeric(12,2) not null default 0, profit numeric(12,2) not null default 0
-);
-create table if not exists public.stock_movements (
- id bigint generated always as identity primary key, product_id bigint not null references public.products(id),
- barcode text not null, movement_type text not null check(movement_type in ('IN','OUT','ADJUSTMENT')),
- qty integer not null, note text, created_at timestamptz not null default now()
-);
-alter table public.products enable row level security;
-alter table public.sales enable row level security;
-alter table public.sale_items enable row level security;
-alter table public.stock_movements enable row level security;
-
--- FIX: app.js stores customer phone in public.sales.
-alter table public.sales
-add column if not exists phone text;
+-- SHASHA MOTORS POS — SUPABASE SETUP
+create table if not exists public.products(id bigint generated always as identity primary key,barcode text unique not null,name text not null,part_no text,buy numeric(12,2) not null default 0,sell numeric(12,2) not null default 0,stock integer not null default 0,min_stock integer not null default 0,created_at timestamptz not null default now(),updated_at timestamptz not null default now());
+create table if not exists public.sales(id bigint generated always as identity primary key,invoice text unique not null,sale_time timestamptz not null default now(),subtotal numeric(12,2) not null default 0,discount numeric(12,2) not null default 0,total numeric(12,2) not null default 0,profit numeric(12,2) not null default 0,payment text not null default 'CASH',cash numeric(12,2) not null default 0,balance numeric(12,2) not null default 0,customer text,phone text);
+create table if not exists public.sale_items(id bigint generated always as identity primary key,sale_id bigint not null references public.sales(id) on delete cascade,product_id bigint not null references public.products(id),barcode text not null,name text not null,qty integer not null check(qty>0),unit_price numeric(12,2) not null default 0,buy_price numeric(12,2) not null default 0,total numeric(12,2) not null default 0,profit numeric(12,2) not null default 0);
+create table if not exists public.stock_movements(id bigint generated always as identity primary key,product_id bigint not null references public.products(id),barcode text not null,movement_type text not null check(movement_type in ('IN','OUT','ADJUSTMENT')),qty integer not null,note text,created_at timestamptz not null default now());
+alter table public.sales add column if not exists phone text;
+alter table public.products enable row level security;alter table public.sales enable row level security;alter table public.sale_items enable row level security;alter table public.stock_movements enable row level security;
+drop policy if exists "POS products select" on public.products;drop policy if exists "POS products insert" on public.products;drop policy if exists "POS products update" on public.products;drop policy if exists "POS sales select" on public.sales;drop policy if exists "POS sales insert" on public.sales;drop policy if exists "POS sale_items select" on public.sale_items;drop policy if exists "POS sale_items insert" on public.sale_items;drop policy if exists "POS stock_movements select" on public.stock_movements;drop policy if exists "POS stock_movements insert" on public.stock_movements;
+create policy "POS products select" on public.products for select to anon using(true);create policy "POS products insert" on public.products for insert to anon with check(true);create policy "POS products update" on public.products for update to anon using(true) with check(true);
+create policy "POS sales select" on public.sales for select to anon using(true);create policy "POS sales insert" on public.sales for insert to anon with check(true);
+create policy "POS sale_items select" on public.sale_items for select to anon using(true);create policy "POS sale_items insert" on public.sale_items for insert to anon with check(true);
+create policy "POS stock_movements select" on public.stock_movements for select to anon using(true);create policy "POS stock_movements insert" on public.stock_movements for insert to anon with check(true);
+grant usage on schema public to anon;grant select,insert,update on public.products to anon;grant select,insert on public.sales to anon;grant select,insert on public.sale_items to anon;grant select,insert on public.stock_movements to anon;
