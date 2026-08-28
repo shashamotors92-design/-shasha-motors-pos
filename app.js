@@ -1,4 +1,4 @@
-const SUPABASE_URL="https://mncufdwicrlknhhkica.supabase.co";
+const SUPABASE_URL="https://mncufdwiclrlknhhkica.supabase.co";
 const SUPABASE_KEY="sb_publishable_pK3jWDVlSe6moSxIBIHO2g_JNxnuA4O";
 
 const PK="shasha_final_products_v1",SK="shasha_final_sales_v1",IK="shasha_final_invoice_v1",SYNC_KEY="shasha_final_pending_sync_v2";
