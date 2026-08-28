@@ -1,15 +1,11 @@
-SHASHA MOTORS POS - DEPLOYABLE IPHONE VERSION
-
-This folder is ready for a static web host such as Netlify Drop.
-
-Important:
-- The current static version stores test data in the iPhone browser.
-- It is NOT yet a shared cloud database.
-- Do not use it as the only record for real sales until the cloud database is connected.
-
-To deploy:
-1. Upload this entire folder to a static web host.
-2. Open the generated HTTPS URL in Safari.
-3. Safari -> Share -> Add to Home Screen.
-
-The product master embedded in this version comes from the Shasha Motors POS project.
+SHASHA MOTORS POS — COMPLETE
+1. Run supabase_schema.sql in the same Supabase project.
+2. Upload ALL files to GitHub repository root.
+3. GitHub Pages: main branch / root.
+4. Open the new Pages URL in Safari.
+5. If an old Home Screen app exists, remove it and add the new site again.
+6. Every sale is saved locally FIRST. Cloud failure does not cancel the sale.
+7. Pending sales retry automatically every 30 seconds and when online.
+8. More -> Sync Pending Sales forces a retry.
+9. Existing localStorage keys are preserved: shasha_final_products_v1, shasha_final_sales_v1, shasha_final_invoice_v1.
+IMPORTANT: the SQL policies intentionally allow anonymous browser access. For production multi-user use, add authentication and stricter RLS.
